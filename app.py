@@ -1,11 +1,12 @@
 import os
 import re
 import uuid
+import time
 
 import streamlit as st
 from PIL import Image
 from supabase import create_client
-
+from google import genai
 
 
 # --------------------------------------------------
@@ -31,6 +32,15 @@ if st.session_state.get("app_state_version") != APP_STATE_VERSION:
 if "expert_request_submitting" not in st.session_state:
     st.session_state["expert_request_submitting"] = False
 
+if "ai_diagnosis" not in st.session_state:
+    st.session_state["ai_diagnosis"] = None
+
+if "diagnosis_id" not in st.session_state:
+    st.session_state["diagnosis_id"] = None
+
+if "analysis_submitting" not in st.session_state:
+    st.session_state["analysis_submitting"] = False
+
 # ---------------------------------------------
 # SUPABASE CONNECTION
 # ---------------------------------------------
@@ -48,6 +58,21 @@ def get_supabase_client():
         supabase_secret_key
     )
 
+# -------------------------------------------------
+# GEMINI CONNECTION
+# -------------------------------------------------
+
+@st.cache_resource
+def get_gemini_client():
+    api_key = os.getenv("GEMINI_API_KEY")
+
+    if not api_key:
+        return None
+
+    return genai.Client(api_key=api_key)
+
+
+gemini_client = get_gemini_client()
 
 supabase = get_supabase_client()
 
@@ -310,60 +335,159 @@ st.subheader("Possible Diagnosis")
 if analyze_button:
 
     if uploaded_file is None:
-
         st.warning(
             "Please upload or take a photo before analyzing."
         )
 
     elif selected_type.startswith("Select"):
-
         st.warning(
             f"Please select a {category_name.lower()} type."
         )
 
+    elif gemini_client is None:
+        st.error(
+            "AI analysis is not configured. "
+            "Please contact the AgroAid AI administrator."
+        )
+
     else:
+        try:
+            st.session_state["ai_diagnosis"] = None
 
-        st.success("Image ready for analysis.")
+            with st.spinner("Analyzing image with AgroAid AI..."):
 
-        with st.container(border=True):
-            st.markdown("### AI analysis placeholder")
+                image = Image.open(uploaded_file)
 
-            st.write(f"**Category:** {category_name}")
-            st.write(f"**Type:** {selected_type}")
+                prompt = f"""
+You are AgroAid AI, an agricultural image analysis assistant.
 
-            if symptoms.strip():
-                st.write("**Farmer's description:**")
-                st.write(symptoms)
+Analyze the uploaded image using the image itself and the information
+provided by the farmer.
 
-            st.info(
-                "The image has been received successfully. "
-                "A vision-capable AI model will be connected here "
-                "in the next development stage."
+Category: {category_name}
+Type: {selected_type}
+Farmer's symptom description:
+{symptoms.strip() if symptoms.strip() else "No symptom description provided."}
+
+Provide a preliminary agricultural assessment using exactly these sections:
+
+### Possible condition
+State the most likely crop or animal health problem.
+
+### Confidence
+Give a confidence level of Low, Medium, or High and briefly explain why.
+
+### Observed symptoms
+Describe the relevant signs visible in the uploaded image.
+
+### Recommended next steps
+Give practical and safe actions the farmer should take next.
+
+### Expert help
+State whether the farmer should consult an agricultural or veterinary
+specialist.
+
+Rules:
+- Do not claim absolute certainty.
+- Do not invent symptoms that cannot be seen or inferred from the provided information.
+- If the image is unclear, say that the image quality limits the assessment.
+- Avoid unsafe pesticide, chemical, veterinary, or medical instructions.
+- Keep the response clear and practical.
+"""
+
+            response = None
+            last_error = None
+
+            for attempt in range(3):
+                try:
+                    response = gemini_client.models.generate_content(
+                        model="gemini-3.8-flash",
+                        contents=[image, prompt],
+                    )
+                    break
+
+                except Exception as error:
+                    last_error = error
+                    error_text = str(error)
+
+                    if "503" in error_text or "UNAVAILABLE" in error_text:
+                        if attempt < 2:
+                            time.sleep(3 * (attempt + 1))
+                            continue
+
+                    raise
+
+                if response is None:
+                    raise RuntimeError(
+                        f"Gemini is temporarily unavailable: {last_error}"
+                    )
+
+            if not response.text:
+                raise RuntimeError(
+                    "Gemini returned an empty response."
+                )
+
+            diagnosis_text = response.text
+
+            diagnosis_id = f"DX-{uuid.uuid4().hex[:8].upper()}"
+
+            diagnosis_record = {
+                "diagnosis_id": diagnosis_id,
+                "category": category_name,
+                "item_type": selected_type,
+                "symptoms": symptoms.strip() or None,
+                "ai_diagnosis": diagnosis_text,
+                "model": "gemini-3.8-flash",
+            }
+
+            if supabase is None:
+                raise RuntimeError(
+                    "Database connection is not configured."
+                )
+
+            db_response = (
+                supabase
+                .table("diagnoses")
+                .insert(diagnosis_record)
+                .execute()
             )
 
-else:
-
-    st.markdown(
-        """
-        <div class="diagnosis-box">
-            <div class="diagnosis-heading">
-                Diagnosis results will appear here
-            </div>
-
-            After AI integration, this section will contain:
-            <br><br>
-
-            • Possible condition<br>
-            • Confidence level<br>
-            • Symptoms detected in the image<br>
-            • Recommended safe next steps<br>
-            • Advice on whether expert help is recommended
-        </div>
-        """,
-        unsafe_allow_html=True,
+            if not db_response.data:
+                raise RuntimeError(
+                    "The diagnosis could not be saved to the database."
     )
 
+            st.session_state["ai_diagnosis"] = diagnosis_text
+            st.session_state["diagnosis_id"] = diagnosis_id
 
+
+        except Exception as error:
+            error_text = str(error)
+
+            if "503" in error_text or "UNAVAILABLE" in error_text:
+                st.warning(
+                    "AgroAid AI is temporarily busy. "
+                    "Please wait a few seconds and try again."
+                )
+            else:
+                st.error(
+                    "The image could not be analyzed. "
+                    "Please try again."
+                )
+
+            print(f"Gemini analysis error: {error}")
+
+
+if st.session_state.get("ai_diagnosis"):
+    with st.container(border=True):
+
+        if st.session_state.get("diagnosis_id"):
+            st.caption(
+                f"Diagnosis reference: "
+                f"{st.session_state['diagnosis_id']}"
+            )
+
+        st.markdown(st.session_state["ai_diagnosis"])
 # --------------------------------------------------
 # EXPERT HELP
 # --------------------------------------------------
@@ -516,6 +640,7 @@ if submit_expert_request:
             "symptoms": symptoms.strip() or None,
             "urgency": urgency,
             "additional_notes": additional_notes.strip() or None,
+            "diagnosis_id": st.session_state.get("diagnosis_id"),
             "status": "Pending",
         }
 
@@ -543,6 +668,7 @@ if submit_expert_request:
 
                 st.session_state["expert_case"] = {
                     "case_id": case_id,
+                    "diagnosis_id": st.session_state.get("diagnosis_id"),
                     "farmer_name": farmer_name.strip(),
                     "contact_method": contact_method,
                     "contact_detail": contact_detail.strip(),
@@ -569,7 +695,7 @@ if submit_expert_request:
                 print(
                     f"Supabase insert error: {error}"
                 )
-                            
+
 # --------------------------------------------------
 # CASE SUMMARY
 # --------------------------------------------------
@@ -586,6 +712,9 @@ if st.session_state.get("expert_case"):
         st.markdown("### Expert Request Summary")
 
         st.write(f"**Case ID:** {case['case_id']}")
+        if case.get("diagnosis_id"):
+            st.write(f"**Diagnosis reference:** {case['diagnosis_id']}")
+            
         st.write(f"**Farmer:** {case['farmer_name']}")
         st.write(
             f"**Contact:** {case['contact_method']} - "
