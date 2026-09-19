@@ -211,7 +211,7 @@ if uploaded_file is not None:
         st.image(
             image,
             caption=f"{category_name} image preview",
-            use_container_width=True,
+            width="stretch",
         )
 
         st.caption(
@@ -259,7 +259,7 @@ st.subheader("5. Analyze")
 analyze_button = st.button(
     "🔍 Analyze Image",
     type="primary",
-    use_container_width=True,
+    width="stretch",
 )
 
 
@@ -341,7 +341,7 @@ st.write(
 
 expert_help = st.button(
     "Request Expert Help",
-    use_container_width=True,
+    width="stretch",
 )
 
 
