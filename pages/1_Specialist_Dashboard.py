@@ -2,7 +2,29 @@ import os
 
 import streamlit as st
 from supabase import create_client
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
+def format_timestamp(value):
+    if not value:
+        return "Not available"
+
+    try:
+        if isinstance(value, str):
+            value = datetime.fromisoformat(
+                value.replace("Z", "+00:00")
+            )
+
+        lagos_time = value.astimezone(
+            ZoneInfo("Africa/Lagos")
+        )
+
+        return lagos_time.strftime(
+            "%d %b %Y, %I:%M %p WAT"
+        )
+
+    except (ValueError, TypeError):
+        return str(value)
 
 # -------------------------------------------------
 # PAGE CONFIG
@@ -342,7 +364,7 @@ else:
                 "Urgency": request.get("urgency"),
                 "Status": request.get("status"),
                 "Diagnosis": request.get("diagnosis_id"),
-                "Submitted": request.get("created_at"),
+                "Submitted": format_timestamp(request.get("created_at")),
             }
         )
 
@@ -515,6 +537,85 @@ if requests:
             "This expert request was created before "
             "AI diagnosis linking was added."
         )
+
+
+# ------------------------------------------------
+# SPECIALIST RESPONSE
+# ------------------------------------------------
+
+st.subheader("Specialist Recommendation")
+
+existing_response = selected_case.get("specialist_response") or ""
+
+specialist_response = st.text_area(
+    "Response to farmer",
+    value=existing_response,
+    placeholder=(
+        "Enter your professional assessment, recommendations, "
+        "and any next steps for the farmer."
+    ),
+    height=180,
+    key=f"specialist_response_{selected_case['case_id']}",
+)
+
+st.caption(
+    "Submitting a specialist response will mark this case as Resolved."
+)
+
+if st.button(
+    "Submit Specialist Response",
+    type="primary",
+    width="stretch",
+    key=f"submit_specialist_response_{selected_case['case_id']}",
+):
+    if not specialist_response.strip():
+        st.warning("Please enter a specialist response before submitting.")
+
+    else:
+        try:
+            response_update = (
+                auth_client
+                .table("expert_requests")
+                .update(
+                    {
+                        "specialist_response": specialist_response.strip(),
+                        "specialist_email": st.session_state[
+                            "specialist_email"
+                        ],
+                        "responded_at": datetime.now(
+                            timezone.utc
+                        ).isoformat(),
+                        "status": "Resolved",
+                    }
+                )
+                .eq(
+                    "case_id",
+                    selected_case["case_id"],
+                )
+                .execute()
+            )
+
+            if not response_update.data:
+                raise RuntimeError(
+                    "The database did not confirm the specialist response."
+                )
+
+            st.success(
+                f"Response submitted for "
+                f"{selected_case['case_id']}."
+            )
+
+            st.rerun()
+
+        except Exception as error:
+            st.error(
+                "The specialist response could not be saved. "
+                "Please try again."
+            )
+
+            print(
+                f"Specialist response error: {error}"
+            )
 
 
     # ---------------------------------------------
