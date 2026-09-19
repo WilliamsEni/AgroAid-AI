@@ -1,8 +1,11 @@
+import os
 import re
 import uuid
 
 import streamlit as st
 from PIL import Image
+from supabase import create_client
+
 
 
 # --------------------------------------------------
@@ -15,6 +18,38 @@ st.set_page_config(
     layout="centered",
 )
 
+# --------------------------------------------------
+# SESSION STATE
+# --------------------------------------------------
+
+APP_STATE_VERSION = "supabase-v3"
+
+if st.session_state.get("app_state_version") != APP_STATE_VERSION:
+    st.session_state["expert_case"] = None
+    st.session_state["app_state_version"] = APP_STATE_VERSION
+
+if "expert_request_submitting" not in st.session_state:
+    st.session_state["expert_request_submitting"] = False
+
+# ---------------------------------------------
+# SUPABASE CONNECTION
+# ---------------------------------------------
+
+@st.cache_resource
+def get_supabase_client():
+    supabase_url = os.getenv("SUPABASE_URL")
+    supabase_secret_key = os.getenv("SUPABASE_SECRET_KEY")
+
+    if not supabase_url or not supabase_secret_key:
+        return None
+
+    return create_client(
+        supabase_url,
+        supabase_secret_key
+    )
+
+
+supabase = get_supabase_client()
 
 # --------------------------------------------------
 # CUSTOM STYLING
@@ -350,33 +385,34 @@ with st.expander("Request Expert Help", expanded=False):
         farmer_name = st.text_input(
             "Farmer's name",
             max_chars=80,
-            placeholder="Enter your name"
+            placeholder="Enter your name",
+            key="expert_farmer_name"
         )
 
         contact_method = st.selectbox(
             "Preferred contact method",
-            ["Select contact method", "Phone", "WhatsApp", "Email"]
+            ["Select contact method", "Phone", "WhatsApp", "Email"],
+            key="expert_contact_method"
         )
 
         contact_detail = st.text_input(
             "Phone number or email address",
             max_chars=120,
-            placeholder="Example: +2348012345678 or farmer@example.com"
+            placeholder="Example: +2348012345678 or farmer@example.com",
+            key="expert_contact_detail"
         )
 
         farmer_location = st.text_input(
             "Location (Optional)",
             max_chars=100,
-            placeholder="Example: Abeokuta, Ogun State"
+            placeholder="Example: Abeokuta, Ogun State",
+            key="expert_farmer_location"
         )
 
         urgency = st.selectbox(
             "How urgent is the problem?",
-            [
-                "Normal",
-                "Urgent",
-                "Emergency"
-            ]
+            ["Normal", "Urgent", "Emergency"],
+            key="expert_urgency"
         )
 
         additional_notes = st.text_area(
@@ -385,12 +421,14 @@ with st.expander("Request Expert Help", expanded=False):
             placeholder=(
                 "Add anything else the agricultural specialist "
                 "should know."
-            )
+            ),
+            key="expert_additional_notes"
         )
 
         consent = st.checkbox(
             "I agree to share the information provided in this case "
-            "with an agricultural specialist."
+            "with an agricultural specialist.",
+            key="expert_consent"
         )
 
         submit_expert_request = st.form_submit_button(
@@ -399,14 +437,11 @@ with st.expander("Request Expert Help", expanded=False):
             width="stretch"
         )
 
-
 # --------------------------------------------------
 # EXPERT REQUEST VALIDATION
 # --------------------------------------------------
 
 if submit_expert_request:
-
-    st.session_state.pop("expert_case", None)
 
     errors = []
 
@@ -436,7 +471,6 @@ if submit_expert_request:
         )
 
     if contact_method == "Email" and contact_detail.strip():
-
         email_pattern = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 
         if not re.match(email_pattern, contact_detail.strip()):
@@ -445,7 +479,6 @@ if submit_expert_request:
             )
 
     if contact_method in ["Phone", "WhatsApp"] and contact_detail.strip():
-
         phone_pattern = r"^\+?[0-9\s\-()]{7,20}$"
 
         if not re.match(phone_pattern, contact_detail.strip()):
@@ -459,43 +492,97 @@ if submit_expert_request:
         )
 
     if errors:
-
         for error in errors:
             st.error(error)
 
     else:
 
+        if st.session_state.get("expert_request_submitting", False):
+            st.warning("This request is already being submitted.")
+            st.stop()
+
+        st.session_state["expert_request_submitting"] = True
+
         case_id = f"AG-{uuid.uuid4().hex[:8].upper()}"
 
-        st.session_state["expert_case"] = {
+        db_record = {
             "case_id": case_id,
             "farmer_name": farmer_name.strip(),
             "contact_method": contact_method,
             "contact_detail": contact_detail.strip(),
-            "location": farmer_location.strip(),
+            "location": farmer_location.strip() or None,
             "category": category_name,
-            "type": selected_type,
-            "symptoms": symptoms.strip(),
+            "item_type": selected_type,
+            "symptoms": symptoms.strip() or None,
             "urgency": urgency,
-            "additional_notes": additional_notes.strip(),
+            "additional_notes": additional_notes.strip() or None,
+            "status": "Pending",
         }
 
-        st.success(
-            f"Expert help request created successfully. "
-            f"Reference: {case_id}"
-        )
+        if supabase is None:
+            st.session_state["expert_request_submitting"] = False
 
+            st.error(
+                "Database connection is not configured. "
+                "Please contact the AgroAid AI administrator."
+            )
 
+        else:
+            try:
+                response = (
+                    supabase
+                    .table("expert_requests")
+                    .insert(db_record)
+                    .execute()
+                )
+
+                if not response.data:
+                    raise RuntimeError(
+                        "The database did not confirm the new request."
+                    )
+
+                st.session_state["expert_case"] = {
+                    "case_id": case_id,
+                    "farmer_name": farmer_name.strip(),
+                    "contact_method": contact_method,
+                    "contact_detail": contact_detail.strip(),
+                    "location": farmer_location.strip(),
+                    "category": category_name,
+                    "type": selected_type,
+                    "symptoms": symptoms.strip(),
+                    "urgency": urgency,
+                    "additional_notes": additional_notes.strip(),
+                }
+
+                st.session_state["expert_request_submitting"] = False
+
+                st.rerun()
+
+            except Exception as error:
+                st.session_state["expert_request_submitting"] = False
+
+                st.error(
+                    "The expert request could not be saved. "
+                    "Please try again."
+                )
+
+                print(
+                    f"Supabase insert error: {error}"
+                )
+                            
 # --------------------------------------------------
 # CASE SUMMARY
 # --------------------------------------------------
 
-if "expert_case" in st.session_state:
-
+if st.session_state.get("expert_case"):
     case = st.session_state["expert_case"]
 
-    with st.container(border=True):
+    st.success(
+        f"Expert help request created successfully. "
+        f"Reference: {case['case_id']}"
+    )
 
+    with st.container(border=True):
         st.markdown("### Expert Request Summary")
 
         st.write(f"**Case ID:** {case['case_id']}")
@@ -519,13 +606,6 @@ if "expert_case" in st.session_state:
         if case["additional_notes"]:
             st.write("**Additional notes:**")
             st.write(case["additional_notes"])
-
-        st.info(
-            "This MVP currently keeps the request in the active "
-            "application session. Database storage and specialist "
-            "notifications will be connected in the next backend stage."
-        )
-
 
 # --------------------------------------------------
 # SAFETY NOTE
