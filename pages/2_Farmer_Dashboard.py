@@ -44,6 +44,25 @@ st.set_page_config(
 )
 
 
+# -------------------------------------------------
+# PUBLIC NAVIGATION
+# -------------------------------------------------
+
+with st.sidebar:
+    st.markdown("### 🌱 AgroAid AI")
+
+    st.page_link(
+        "app.py",
+        label="Get Agricultural Help",
+        icon="🌱",
+    )
+
+    st.page_link(
+        "pages/2_Farmer_Dashboard.py",
+        label="Track My Case",
+        icon="📋",
+    )
+
 # --------------------------------------------------
 # SUPABASE CONNECTION
 # --------------------------------------------------

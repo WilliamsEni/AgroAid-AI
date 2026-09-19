@@ -19,6 +19,25 @@ st.set_page_config(
     layout="centered",
 )
 
+# -------------------------------------------------
+# PUBLIC NAVIGATION
+# -------------------------------------------------
+
+with st.sidebar:
+    st.markdown("### 🌱 AgroAid AI")
+
+    st.page_link(
+        "app.py",
+        label="Get Agricultural Help",
+        icon="🌱",
+    )
+
+    st.page_link(
+        "pages/2_Farmer_Dashboard.py",
+        label="Track My Case",
+        icon="📋",
+    )
+
 # --------------------------------------------------
 # SESSION STATE
 # --------------------------------------------------
@@ -696,135 +715,6 @@ if submit_expert_request:
                     f"Supabase insert error: {error}"
                 )
 
-
-# --------------------------------------------------
-# CHECK SPECIALIST RESPONSE
-# --------------------------------------------------
-
-st.divider()
-
-st.subheader("📩 Check Specialist Response")
-
-st.write(
-    "If you previously requested expert help, enter your case ID "
-    "and the contact information used when submitting the request."
-)
-
-with st.form("check_specialist_response_form"):
-
-    lookup_case_id = st.text_input(
-        "Case ID",
-        placeholder="Example: AG-EA308623"
-    )
-
-    lookup_contact = st.text_input(
-        "Phone number or email",
-        placeholder="Enter the same contact information used in your request"
-    )
-
-    check_response = st.form_submit_button(
-        "Check Response",
-        type="primary",
-        width="stretch"
-    )
-
-if check_response:
-
-    case_id_clean = lookup_case_id.strip().upper()
-    contact_clean = lookup_contact.strip()
-
-    if not case_id_clean or not contact_clean:
-
-        st.warning(
-            "Please enter both your case ID and contact information."
-        )
-
-    elif supabase is None:
-
-        st.error(
-            "The database connection is not configured."
-        )
-
-    else:
-
-        try:
-
-            response = (
-                supabase
-                .table("expert_requests")
-                .select(
-                    "case_id,status,specialist_response,responded_at"
-                )
-                .eq("case_id", case_id_clean)
-                .eq("contact_detail", contact_clean)
-                .limit(1)
-                .execute()
-            )
-
-            rows = response.data or []
-
-            if not rows:
-
-                st.error(
-                    "No matching expert request was found. "
-                    "Check your case ID and contact information."
-                )
-
-            else:
-
-                case = rows[0]
-
-                st.caption(
-                    f"Case reference: {case['case_id']}"
-                )
-
-                status = case.get("status") or "Pending"
-
-                if case.get("specialist_response"):
-
-                    st.success(
-                        "Your agricultural specialist has responded."
-                    )
-
-                    with st.container(border=True):
-
-                        st.markdown("### 👩‍🌾 Specialist Recommendation")
-
-                        st.write(
-                            case["specialist_response"]
-                        )
-
-                        if case.get("responded_at"):
-
-                            st.caption(
-                                f"Response received: {case['responded_at']}"
-                            )
-
-                        st.write(
-                            f"**Case status:** {status}"
-                        )
-
-                else:
-
-                    st.info(
-                        "Your request has been received, but a specialist "
-                        "has not responded yet."
-                    )
-
-                    st.write(
-                        f"**Current status:** {status}"
-                    )
-
-        except Exception as error:
-
-            st.error(
-                "The specialist response could not be retrieved. "
-                "Please try again."
-            )
-
-            print(
-                f"Specialist response lookup error: {error}"
-            )
 
 # --------------------------------------------------
 # CASE SUMMARY
