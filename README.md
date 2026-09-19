@@ -23,7 +23,10 @@ https://agroaid-ai.onrender.com
 - Farmer symptom description
 - Analyze Image workflow
 - AI diagnosis placeholder
-- Expert Help workflow placeholder
+- Expert Help request form
+- Farmer contact validation
+- Unique expert case reference generation
+- Session-based expert case summary
 - Docker containerization
 - GitHub Actions CI pipeline
 - Public deployment on Render

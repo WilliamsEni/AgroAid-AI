@@ -1,3 +1,6 @@
+import re
+import uuid
+
 import streamlit as st
 from PIL import Image
 
@@ -335,35 +338,192 @@ st.divider()
 st.subheader("👨‍🌾 Get Expert Help")
 
 st.write(
-    "If the farmer needs additional assistance, AgroAid AI will allow "
-    "the case to be sent to an agricultural specialist."
+    "Request assistance from an agricultural specialist. "
+    "Your crop or animal details and symptom description will be "
+    "included with the request."
 )
 
-expert_help = st.button(
-    "Request Expert Help",
-    width="stretch",
-)
+with st.expander("Request Expert Help", expanded=False):
+
+    with st.form("expert_help_form"):
+
+        farmer_name = st.text_input(
+            "Farmer's name",
+            max_chars=80,
+            placeholder="Enter your name"
+        )
+
+        contact_method = st.selectbox(
+            "Preferred contact method",
+            ["Select contact method", "Phone", "WhatsApp", "Email"]
+        )
+
+        contact_detail = st.text_input(
+            "Phone number or email address",
+            max_chars=120,
+            placeholder="Example: +2348012345678 or farmer@example.com"
+        )
+
+        farmer_location = st.text_input(
+            "Location (Optional)",
+            max_chars=100,
+            placeholder="Example: Abeokuta, Ogun State"
+        )
+
+        urgency = st.selectbox(
+            "How urgent is the problem?",
+            [
+                "Normal",
+                "Urgent",
+                "Emergency"
+            ]
+        )
+
+        additional_notes = st.text_area(
+            "Additional information (Optional)",
+            max_chars=500,
+            placeholder=(
+                "Add anything else the agricultural specialist "
+                "should know."
+            )
+        )
+
+        consent = st.checkbox(
+            "I agree to share the information provided in this case "
+            "with an agricultural specialist."
+        )
+
+        submit_expert_request = st.form_submit_button(
+            "Submit Expert Request",
+            type="primary",
+            width="stretch"
+        )
 
 
-if expert_help:
+# --------------------------------------------------
+# EXPERT REQUEST VALIDATION
+# --------------------------------------------------
+
+if submit_expert_request:
+
+    st.session_state.pop("expert_case", None)
+
+    errors = []
 
     if uploaded_file is None:
-
-        st.warning(
-            "Please add an image before requesting expert help."
+        errors.append(
+            "Please upload or take a photo before requesting expert help."
         )
 
-    elif selected_type.startswith("Select"):
-
-        st.warning(
-            f"Please select a {category_name.lower()} type first."
+    if selected_type.startswith("Select"):
+        errors.append(
+            f"Please select a {category_name.lower()} type."
         )
+
+    if not farmer_name.strip():
+        errors.append(
+            "Please enter the farmer's name."
+        )
+
+    if contact_method == "Select contact method":
+        errors.append(
+            "Please select a preferred contact method."
+        )
+
+    if not contact_detail.strip():
+        errors.append(
+            "Please enter a phone number or email address."
+        )
+
+    if contact_method == "Email" and contact_detail.strip():
+
+        email_pattern = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+
+        if not re.match(email_pattern, contact_detail.strip()):
+            errors.append(
+                "Please enter a valid email address."
+            )
+
+    if contact_method in ["Phone", "WhatsApp"] and contact_detail.strip():
+
+        phone_pattern = r"^\+?[0-9\s\-()]{7,20}$"
+
+        if not re.match(phone_pattern, contact_detail.strip()):
+            errors.append(
+                "Please enter a valid phone number."
+            )
+
+    if not consent:
+        errors.append(
+            "Please confirm consent before submitting the request."
+        )
+
+    if errors:
+
+        for error in errors:
+            st.error(error)
 
     else:
 
+        case_id = f"AG-{uuid.uuid4().hex[:8].upper()}"
+
+        st.session_state["expert_case"] = {
+            "case_id": case_id,
+            "farmer_name": farmer_name.strip(),
+            "contact_method": contact_method,
+            "contact_detail": contact_detail.strip(),
+            "location": farmer_location.strip(),
+            "category": category_name,
+            "type": selected_type,
+            "symptoms": symptoms.strip(),
+            "urgency": urgency,
+            "additional_notes": additional_notes.strip(),
+        }
+
+        st.success(
+            f"Expert help request created successfully. "
+            f"Reference: {case_id}"
+        )
+
+
+# --------------------------------------------------
+# CASE SUMMARY
+# --------------------------------------------------
+
+if "expert_case" in st.session_state:
+
+    case = st.session_state["expert_case"]
+
+    with st.container(border=True):
+
+        st.markdown("### Expert Request Summary")
+
+        st.write(f"**Case ID:** {case['case_id']}")
+        st.write(f"**Farmer:** {case['farmer_name']}")
+        st.write(
+            f"**Contact:** {case['contact_method']} - "
+            f"{case['contact_detail']}"
+        )
+
+        if case["location"]:
+            st.write(f"**Location:** {case['location']}")
+
+        st.write(f"**Category:** {case['category']}")
+        st.write(f"**Type:** {case['type']}")
+        st.write(f"**Urgency:** {case['urgency']}")
+
+        if case["symptoms"]:
+            st.write("**Symptoms:**")
+            st.write(case["symptoms"])
+
+        if case["additional_notes"]:
+            st.write("**Additional notes:**")
+            st.write(case["additional_notes"])
+
         st.info(
-            "Expert request feature is ready for backend integration. "
-            "No request has been sent yet."
+            "This MVP currently keeps the request in the active "
+            "application session. Database storage and specialist "
+            "notifications will be connected in the next backend stage."
         )
 
 
